@@ -14,11 +14,14 @@ builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, relo
 builder.Services.AddControllers();
 
 // 🔥 AÑADIDO: Configuración de CORS para permitir que Vite consuma la API
+var allowedOrigins = builder.Configuration["AllowedOrigins"]?.Split(",") 
+    ?? new[] { "http://localhost:5173" };
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowReactApp", policy =>
     {
-        policy.WithOrigins("http://localhost:5173")
+        policy.WithOrigins(allowedOrigins)
               .AllowAnyHeader()
               .AllowAnyMethod()
               .AllowCredentials();
@@ -88,9 +91,8 @@ if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
+    app.UseHttpsRedirection();
 }
-
-app.UseHttpsRedirection();
 
 // 🔥 AÑADIDO: Activar CORS ANTES de UseAuthentication
 app.UseCors("AllowReactApp");
