@@ -1,0 +1,6 @@
+@ShippingExitSystem_HostAddress = http://localhost:5229
+
+GET {{ShippingExitSystem_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

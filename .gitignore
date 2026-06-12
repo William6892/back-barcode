@@ -1,0 +1,41 @@
+## .NET / Visual Studio
+bin/
+obj/
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Build results
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+build/
+bld/
+
+# NuGet
+*.nupkg
+**/packages/*
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# User-specific files
+*.rsuser
+*.csproj.user
+
+# Rider
+.idea/
+
+# Sensitive config (use environment variables in production)
+appsettings.Local.json
+appsettings.Production.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test scripts
+test_flow.ps1
