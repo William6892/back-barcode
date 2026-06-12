@@ -12,21 +12,6 @@ builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, relo
 
 // Add services to the container.
 builder.Services.AddControllers();
-
-// 🔥 AÑADIDO: Configuración de CORS para permitir que Vite consuma la API
-var allowedOrigins = builder.Configuration["AllowedOrigins"]?.Split(",") 
-    ?? new[] { "http://localhost:5173" };
-
-builder.Services.AddCors(options =>
-{
-    options.AddPolicy("AllowReactApp", policy =>
-    {
-        policy.WithOrigins(allowedOrigins)
-              .AllowAnyHeader()
-              .AllowAnyMethod()
-              .AllowCredentials();
-    });
-});
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
@@ -57,6 +42,7 @@ builder.Services.AddSwaggerGen(c =>
         }
     });
 });
+
 // Database - PostgreSQL
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
@@ -84,6 +70,21 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IShipmentService, ShipmentService>();
 
+// 🔥 CONFIGURACIÓN DE CORS CORREGIDA
+// Permite explícitamente el frontend en Render
+var frontendUrl = builder.Configuration["FrontendUrl"] ?? "https://frontend-barcode.onrender.com";
+
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowFrontend", policy =>
+    {
+        policy.WithOrigins(frontendUrl)           // URL del frontend en Render
+              .AllowAnyMethod()                    // GET, POST, PUT, DELETE, etc.
+              .AllowAnyHeader()                    // Content-Type, Authorization, etc.
+              .AllowCredentials();                 // Permite cookies/tokens
+    });
+});
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
@@ -91,21 +92,40 @@ if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
+}
+
+// 🔥 IMPORTANTE: El orden importa
+// 1. UseRouting debe estar antes de CORS si lo usas
+app.UseRouting();
+
+// 2. CORS va ANTES de Authentication y Authorization
+app.UseCors("AllowFrontend");
+
+// 3. Redirección HTTPS (solo en desarrollo o si tienes certificado)
+if (app.Environment.IsDevelopment())
+{
     app.UseHttpsRedirection();
 }
 
-// 🔥 AÑADIDO: Activar CORS ANTES de UseAuthentication
-app.UseCors("AllowReactApp");
-
+// 4. Autenticación y Autorización
 app.UseAuthentication();
 app.UseAuthorization();
+
+// 5. Mapeo de controladores
 app.MapControllers();
 
-// 🔥 MIGRACIÓN COMENTADA - No intenta crear tablas que ya existen
-// using (var scope = app.Services.CreateScope())
-// {
-//     var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-//     dbContext.Database.Migrate();
-// }
+// 6. Manejador de errores global opcional (para producción)
+if (!app.Environment.IsDevelopment())
+{
+    app.UseExceptionHandler(errorApp =>
+    {
+        errorApp.Run(async context =>
+        {
+            context.Response.StatusCode = 500;
+            context.Response.ContentType = "application/json";
+            await context.Response.WriteAsync("{\"error\": \"Ocurrió un error en el servidor\"}");
+        });
+    });
+}
 
 app.Run();
