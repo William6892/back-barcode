@@ -1,0 +1,6 @@
+services:
+  shippingexitsystem:
+    image: ${DOCKER_REGISTRY-}shippingexitsystem
+    build:
+      context: .
+      dockerfile: ShippingExitSystem/Dockerfile

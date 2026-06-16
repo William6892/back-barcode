@@ -16,9 +16,8 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0-preview AS runtime
 WORKDIR /app
 COPY --from=build /app/publish .
 
-# Render uses PORT environment variable
-ENV ASPNETCORE_URLS=http://+:${PORT:-10000}
 ENV ASPNETCORE_ENVIRONMENT=Production
 
+# Render asigna el puerto via $PORT (default 10000)
 EXPOSE 10000
-ENTRYPOINT ["dotnet", "ShippingExitSystem.dll"]
+CMD ["sh", "-c", "dotnet ShippingExitSystem.dll --urls http://+:${PORT:-10000}"]

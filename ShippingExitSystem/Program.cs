@@ -74,6 +74,8 @@ try
     // Services
     builder.Services.AddScoped<IAuthService, AuthService>();
     builder.Services.AddScoped<IShipmentService, ShipmentService>();
+    builder.Services.AddScoped<IAuthService, AuthService>();
+    builder.Services.AddScoped<IUserService, UserService>();
 
     // 🔥 CONFIGURACIÓN DE CORS
     var frontendUrl = builder.Configuration["FrontendUrl"] ?? "http://localhost:5173";
