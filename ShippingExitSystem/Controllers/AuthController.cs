@@ -1,7 +1,7 @@
-using BarcodeShippingSystem.DTOs;
 using Microsoft.AspNetCore.Mvc;
-using ShippingExitSystem.DTOs;
+using Microsoft.AspNetCore.Authorization;
 using ShippingExitSystem.Services;
+using ShippingExitSystem.DTOs;
 
 namespace ShippingExitSystem.Controllers;
 
@@ -26,8 +26,7 @@ public class AuthController : ControllerBase
         }
         catch (Exception ex)
         {
-            var innerMessage = ex.InnerException != null ? ex.InnerException.Message : "No inner exception";
-            return BadRequest(new { error = ex.Message, innerError = innerMessage, stackTrace = ex.StackTrace });
+            return BadRequest(new { error = ex.Message });
         }
     }
 
@@ -43,5 +42,15 @@ public class AuthController : ControllerBase
         {
             return Unauthorized(new { error = ex.Message });
         }
+    }
+    [HttpGet("validate")]
+    [Authorize]
+    public IActionResult ValidateToken()
+    {
+        return Ok(new
+        {
+            valid = true,
+            message = "Token válido"
+        });
     }
 }
