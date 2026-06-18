@@ -35,7 +35,7 @@ namespace ShippingExitSystem.Services
             };
 
             _context.Shipments.Add(shipment);
-                await _context.SaveChangesAsync();
+            await _context.SaveChangesAsync();
 
             foreach (var productDto in dto.ExpectedProducts)
             {
@@ -146,7 +146,9 @@ namespace ShippingExitSystem.Services
                 ShipmentNumber = shipment.ShipmentNumber,
                 Carrier = shipment.Carrier,
                 DriverName = shipment.DriverName,
+                VehiclePlate = shipment.VehiclePlate,
                 Status = shipment.Status,
+                CreatedAt = shipment.CreatedAt,
                 CreatedByUserName = shipment.CreatedByUser?.Username ?? "Desconocido",
                 Products = products
             };
@@ -174,7 +176,9 @@ namespace ShippingExitSystem.Services
                 ShipmentNumber = shipment.ShipmentNumber,
                 Carrier = shipment.Carrier,
                 DriverName = shipment.DriverName,
+                VehiclePlate = shipment.VehiclePlate,
                 Status = shipment.Status,
+                CreatedAt = shipment.CreatedAt,
                 CreatedByUserName = shipment.CreatedByUser?.Username ?? "Desconocido",
                 Products = shipment.ExpectedProducts.Select(ep => new ProductSummaryDto
                 {
@@ -195,20 +199,12 @@ namespace ShippingExitSystem.Services
 
         public async Task<bool> CompleteShipmentAsync(int shipmentId, int userId)
         {
-            var shipment = await _context.Shipments
-                .Include(s => s.CreatedByUser)
-                .Include(s => s.ExpectedProducts)
-                    .ThenInclude(ep => ep.ScannedItems)
-                .FirstOrDefaultAsync(s => s.Id == shipmentId);
-
+            var shipment = await _context.Shipments.FindAsync(shipmentId);
             if (shipment == null || shipment.Status != "Active")
                 return false;
 
             shipment.Status = "Completed";
             await _context.SaveChangesAsync();
-
-            // El envío de correo fue removido por solicitud del usuario
-
             return true;
         }
 
@@ -272,7 +268,9 @@ namespace ShippingExitSystem.Services
                 ShipmentNumber = shipment.ShipmentNumber,
                 Carrier = shipment.Carrier,
                 DriverName = shipment.DriverName,
+                VehiclePlate = shipment.VehiclePlate,
                 Status = shipment.Status,
+                CreatedAt = shipment.CreatedAt,
                 CreatedByUserName = shipment.CreatedByUser?.Username ?? "Desconocido",
                 Products = shipment.ExpectedProducts.Select(ep => new ProductSummaryDto
                 {
@@ -297,14 +295,10 @@ namespace ShippingExitSystem.Services
 
             var activeCount = await _context.Shipments.CountAsync(s => s.Status == "Active");
             var completedCount = await _context.Shipments.CountAsync(s => s.Status == "Completed");
-            
-            // Total envíos creados hoy
-            var totalToday = await _context.Shipments.CountAsync(s => s.CreatedAt >= today);
 
-            // Total productos escaneados hoy
+            var totalToday = await _context.Shipments.CountAsync(s => s.CreatedAt >= today);
             var scannedToday = await _context.ScannedItems.CountAsync(si => si.ScannedAt >= today);
 
-            // Top transportadoras
             var topCarriers = await _context.Shipments
                 .Where(s => !string.IsNullOrEmpty(s.Carrier))
                 .GroupBy(s => s.Carrier)
@@ -317,7 +311,6 @@ namespace ShippingExitSystem.Services
                 .Take(5)
                 .ToListAsync();
 
-            // Top productos despachados
             var topProducts = await _context.ExpectedProducts
                 .GroupBy(ep => ep.Name)
                 .Select(g => new DashboardTopItemDto

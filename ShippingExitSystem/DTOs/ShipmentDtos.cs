@@ -31,6 +31,8 @@ namespace ShippingExitSystem.DTOs
         public string Carrier { get; set; } = string.Empty;
         public string DriverName { get; set; } = string.Empty;
         public string Status { get; set; } = string.Empty;
+        public string VehiclePlate { get; set; } = string.Empty;    
+        public DateTime CreatedAt { get; set; }                     
         public string CreatedByUserName { get; set; } = string.Empty;
         public List<ProductSummaryDto> Products { get; set; } = new();
     }
