@@ -85,6 +85,16 @@ public class ShipmentController : ControllerBase
         return Ok(results);
     }
 
+    [HttpGet("search-barcodes")]
+    public async Task<IActionResult> SearchBarcodes([FromQuery] string query, [FromQuery] int page = 1, [FromQuery] int pageSize = 50)
+    {
+        if (string.IsNullOrWhiteSpace(query) || query.Trim().Length < 3)
+            return BadRequest(new { error = "La búsqueda debe tener al menos 3 caracteres." });
+
+        var results = await _shipmentService.SearchBarcodesAsync(query.Trim(), page, pageSize);
+        return Ok(results);
+    }
+
     [HttpGet("dashboard/stats")]
     public async Task<IActionResult> GetStats()
     {
@@ -102,9 +112,9 @@ public class ShipmentController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<IActionResult> GetAll([FromQuery] string? status)
+    public async Task<IActionResult> GetAll([FromQuery] string? status, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
     {
-        var shipments = await _shipmentService.GetAllShipmentsAsync(status);
+        var shipments = await _shipmentService.GetAllShipmentsAsync(status, page, pageSize);
         return Ok(shipments);
     }
 

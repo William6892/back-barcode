@@ -1,26 +1,53 @@
+using System.ComponentModel.DataAnnotations;
+
 namespace ShippingExitSystem.DTOs
 {
     public class CreateShipmentDto
     {
+        [Required(ErrorMessage = "El número de envío es obligatorio.")]
+        [StringLength(50, ErrorMessage = "El número de envío no puede superar los 50 caracteres.")]
         public string ShipmentNumber { get; set; } = string.Empty;
+
+        [StringLength(100, ErrorMessage = "La transportadora no puede superar los 100 caracteres.")]
         public string Carrier { get; set; } = string.Empty;
+
+        [Required(ErrorMessage = "El nombre del conductor es obligatorio.")]
+        [StringLength(100, ErrorMessage = "El nombre del conductor no puede superar los 100 caracteres.")]
         public string DriverName { get; set; } = string.Empty;
+
+        [Required(ErrorMessage = "El documento del conductor es obligatorio.")]
+        [StringLength(50, ErrorMessage = "El documento del conductor no puede superar los 50 caracteres.")]
         public string DriverDocument { get; set; } = string.Empty;
+
+        [StringLength(20, ErrorMessage = "La placa del vehículo no puede superar los 20 caracteres.")]
         public string VehiclePlate { get; set; } = string.Empty;
+
+        [StringLength(50, ErrorMessage = "El modelo del vehículo no puede superar los 50 caracteres.")]
         public string VehicleModel { get; set; } = string.Empty;
+
+        [Required(ErrorMessage = "La fecha programada es obligatoria.")]
         public DateTime ScheduledDate { get; set; }
+
         public List<ExpectedProductDto> ExpectedProducts { get; set; } = new();
     }
 
     public class ExpectedProductDto
     {
+        [Required(ErrorMessage = "El nombre del producto es obligatorio.")]
+        [StringLength(200, ErrorMessage = "El nombre del producto no puede superar los 200 caracteres.")]
         public string Name { get; set; } = string.Empty;
+
+        [StringLength(100, ErrorMessage = "El modelo del producto no puede superar los 100 caracteres.")]
         public string Model { get; set; } = string.Empty;
     }
 
     public class ScanProductDto
     {
+        [Required(ErrorMessage = "El ID del producto esperado es obligatorio.")]
         public int ExpectedProductId { get; set; }
+
+        [Required(ErrorMessage = "El código de barras es obligatorio.")]
+        [StringLength(100, ErrorMessage = "El código de barras no puede superar los 100 caracteres.")]
         public string Barcode { get; set; } = string.Empty;
     }
 

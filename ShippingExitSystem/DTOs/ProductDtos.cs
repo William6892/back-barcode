@@ -1,6 +1,6 @@
-﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;
 
-namespace BarcodeShippingSystem.DTOs
+namespace ShippingExitSystem.DTOs
 {
     public class CreateProductDto
     {

@@ -154,7 +154,7 @@ namespace ShippingExitSystem.Services
             };
         }
 
-        public async Task<List<ShipmentResponseDto>> GetAllShipmentsAsync(string? status = null)
+        public async Task<List<ShipmentResponseDto>> GetAllShipmentsAsync(string? status = null, int page = 1, int pageSize = 20)
         {
             var query = _context.Shipments
                 .Include(s => s.CreatedByUser)
@@ -168,7 +168,11 @@ namespace ShippingExitSystem.Services
             if (!string.IsNullOrEmpty(status))
                 query = query.Where(s => s.Status == status);
 
-            var shipments = await query.ToListAsync();
+            var shipments = await query
+                .OrderByDescending(s => s.CreatedAt)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .ToListAsync();
 
             return shipments.Select(shipment => new ShipmentResponseDto
             {
@@ -237,6 +241,40 @@ namespace ShippingExitSystem.Services
                 ProductName = ep.Name,
                 ProductModel = ep.Model
             };
+        }
+
+        public async Task<List<BarcodeSearchResponseDto>> SearchBarcodesAsync(string query, int page = 1, int pageSize = 50)
+        {
+            var scannedItems = await _context.ScannedItems
+                .Include(si => si.ScannedByUser)
+                .Include(si => si.ExpectedProduct)
+                    .ThenInclude(ep => ep.Shipment)
+                .Where(si => si.Barcode.Contains(query))
+                .OrderByDescending(si => si.ScannedAt)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .ToListAsync();
+
+            return scannedItems.Select(si =>
+            {
+                var ep = si.ExpectedProduct;
+                var shipment = ep.Shipment;
+                return new BarcodeSearchResponseDto
+                {
+                    Barcode = si.Barcode,
+                    ScannedAt = si.ScannedAt,
+                    ScannedByUserName = si.ScannedByUser?.Username ?? "Desconocido",
+                    ShipmentId = shipment.Id,
+                    ShipmentNumber = shipment.ShipmentNumber,
+                    Status = shipment.Status,
+                    Carrier = shipment.Carrier,
+                    DriverName = shipment.DriverName,
+                    DriverDocument = shipment.DriverDocument,
+                    VehiclePlate = shipment.VehiclePlate,
+                    ProductName = ep.Name,
+                    ProductModel = ep.Model
+                };
+            }).ToList();
         }
 
         public async Task<List<ShipmentResponseDto>> SearchShipmentsAsync(string? shipmentNumber, string? vehiclePlate)

@@ -74,7 +74,6 @@ try
     // Services
     builder.Services.AddScoped<IAuthService, AuthService>();
     builder.Services.AddScoped<IShipmentService, ShipmentService>();
-    builder.Services.AddScoped<IAuthService, AuthService>();
     builder.Services.AddScoped<IUserService, UserService>();
 
     // 🔥 CONFIGURACIÓN DE CORS
