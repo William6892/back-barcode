@@ -21,7 +21,7 @@ namespace ShippingExitSystem.Tests
             context.Database.EnsureCreated();
 
             var inMemorySettings = new Dictionary<string, string> {
-                {"JwtSettings:Secret", "SuperSecretKeyBarcodeShipping2026!!1234567890"},
+                {"JwtSettings:Secret", "test-only-secret-not-used-anywhere-else-000000"},
                 {"JwtSettings:Issuer", "BarcodeShippingSystem"},
                 {"JwtSettings:Audience", "BarcodeShippingSystemClient"}
             };
