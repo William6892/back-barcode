@@ -184,9 +184,9 @@ namespace ShippingExitSystem.Tests
         }
 
         [Fact]
-        public async Task ScanProductAsync_ShouldReject_WhenExpectedQuantityIsComplete()
+        public async Task ScanProductAsync_AccumulatesPerReferenceAndShipment()
         {
-            var context = GetInMemoryDbContext("ScanProduct_QuantityFull");
+            var context = GetInMemoryDbContext("ScanProduct_Accumulate");
             var service = new ShipmentService(context);
 
             var user = new User { Username = "guard", Email = "g@test.com", PasswordHash = "hash" };
@@ -195,20 +195,36 @@ namespace ShippingExitSystem.Tests
             context.Shipments.Add(shipment);
             await context.SaveChangesAsync();
 
-            var product = new ExpectedProduct { ShipmentId = shipment.Id, Name = "S25", ExpectedQuantity = 2 };
-            context.ExpectedProducts.Add(product);
+            var s25 = new ExpectedProduct { ShipmentId = shipment.Id, Name = "S25" };
+            var watch = new ExpectedProduct { ShipmentId = shipment.Id, Name = "Watch 7" };
+            context.ExpectedProducts.AddRange(s25, watch);
             await context.SaveChangesAsync();
 
-            await service.ScanProductAsync(shipment.Id, new ScanProductDto { ExpectedProductId = product.Id, Barcode = "SN-1" }, user.Id);
-            var second = await service.ScanProductAsync(shipment.Id, new ScanProductDto { ExpectedProductId = product.Id, Barcode = "SN-2" }, user.Id);
-            Assert.Equal(2, second!.ScannedCount);
-            Assert.Equal(2, second.ExpectedQuantity);
+            for (var i = 1; i <= 3; i++)
+                await service.ScanProductAsync(shipment.Id, new ScanProductDto { ExpectedProductId = s25.Id, Barcode = $"SN-{i}" }, user.Id);
+            var last = await service.ScanProductAsync(shipment.Id, new ScanProductDto { ExpectedProductId = watch.Id, Barcode = "W-1" }, user.Id);
 
-            var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                service.ScanProductAsync(shipment.Id, new ScanProductDto { ExpectedProductId = product.Id, Barcode = "SN-3" }, user.Id));
+            // Sin tope: se suma lo que se escanee
+            Assert.Equal(1, last!.ScannedCount);
+            Assert.Equal(4, last.ShipmentScannedCount);
+            Assert.Equal(3, await context.ScannedItems.CountAsync(si => si.ExpectedProductId == s25.Id));
+        }
 
-            Assert.Contains("unidades completas", exception.Message);
-            Assert.Equal(2, await context.ScannedItems.CountAsync());
+        [Fact]
+        public async Task AddProductToShipmentAsync_ReusesExistingReference()
+        {
+            var context = GetInMemoryDbContext("AddProduct_Dedupe");
+            var service = new ShipmentService(context);
+
+            var shipment = new Shipment { ShipmentNumber = "ENV-R", DriverName = "D", DriverDocument = "doc", Status = "Active", ScheduledDate = DateTime.UtcNow };
+            context.Shipments.Add(shipment);
+            await context.SaveChangesAsync();
+
+            var first = await service.AddProductToShipmentAsync(shipment.Id, new ExpectedProductDto { Name = "Galaxy S25", Model = "SM-S938B" }, 1);
+            var again = await service.AddProductToShipmentAsync(shipment.Id, new ExpectedProductDto { Name = " galaxy s25 ", Model = "sm-s938b" }, 1);
+
+            Assert.Equal(first!.Id, again!.Id);
+            Assert.Equal(1, await context.ExpectedProducts.CountAsync());
         }
 
         [Fact]
@@ -242,7 +258,7 @@ namespace ShippingExitSystem.Tests
             for (var i = 0; i < 120; i++)
             {
                 var s = new Shipment { ShipmentNumber = $"ENV-{i}", DriverName = "D", DriverDocument = "doc", Status = "Active", ScheduledDate = DateTime.UtcNow, CreatedAt = DateTime.UtcNow.AddMinutes(i) };
-                s.ExpectedProducts.Add(new ExpectedProduct { Name = "S25", ExpectedQuantity = 10 });
+                s.ExpectedProducts.Add(new ExpectedProduct { Name = "S25" });
                 context.Shipments.Add(s);
             }
             await context.SaveChangesAsync();
@@ -255,7 +271,6 @@ namespace ShippingExitSystem.Tests
 
             Assert.Equal(ShipmentService.MaxPageSize, page.Count);
             Assert.All(page, s => Assert.All(s.Products, p => Assert.Empty(p.ScannedItems)));
-            Assert.All(page, s => Assert.Equal(10, s.TotalExpected));
         }
 
         [Fact]

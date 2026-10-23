@@ -33,9 +33,6 @@ namespace ShippingExitSystem.Migrations
                     b.Property<int?>("CreatedByUserId")
                         .HasColumnType("integer");
 
-                    b.Property<int>("ExpectedQuantity")
-                        .HasColumnType("integer");
-
                     b.Property<string>("Model")
                         .IsRequired()
                         .HasMaxLength(100)

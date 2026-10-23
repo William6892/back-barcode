@@ -5,18 +5,11 @@
 namespace ShippingExitSystem.Migrations
 {
     /// <inheritdoc />
-    public partial class AddExpectedQuantityAndUniqueBarcode : Migration
+    public partial class AddUniqueBarcodeIndex : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.AddColumn<int>(
-                name: "ExpectedQuantity",
-                table: "ExpectedProducts",
-                type: "integer",
-                nullable: false,
-                defaultValue: 0);
-
             migrationBuilder.CreateIndex(
                 name: "IX_Shipments_Status_CreatedAt",
                 table: "Shipments",
@@ -39,10 +32,6 @@ namespace ShippingExitSystem.Migrations
             migrationBuilder.DropIndex(
                 name: "IX_ScannedItems_Barcode",
                 table: "ScannedItems");
-
-            migrationBuilder.DropColumn(
-                name: "ExpectedQuantity",
-                table: "ExpectedProducts");
         }
     }
 }

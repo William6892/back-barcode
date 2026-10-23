@@ -12,8 +12,8 @@ using ShippingExitSystem.Data;
 namespace ShippingExitSystem.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    [Migration("20261023143323_AddExpectedQuantityAndUniqueBarcode")]
-    partial class AddExpectedQuantityAndUniqueBarcode
+    [Migration("20261023162709_AddUniqueBarcodeIndex")]
+    partial class AddUniqueBarcodeIndex
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -34,9 +34,6 @@ namespace ShippingExitSystem.Migrations
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
                     b.Property<int?>("CreatedByUserId")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("ExpectedQuantity")
                         .HasColumnType("integer");
 
                     b.Property<string>("Model")

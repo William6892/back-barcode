@@ -41,14 +41,14 @@ public class ShipmentController : ControllerBase
     }
 
     [HttpPost("{id}/products")]
-    [Authorize(Roles = Roles.Managers)]
+    // Cualquier usuario: el guarda agrega la referencia en el momento si no estaba en el envío
     public async Task<IActionResult> AddProduct(int id, ExpectedProductDto dto)
     {
         var userId = GetUserId();
         var product = await _shipmentService.AddProductToShipmentAsync(id, dto, userId);
         if (product == null)
             return BadRequest(new { error = "No se pudo añadir el producto. Verifique que el envío exista y esté activo." });
-        return Ok(new { id = product.Id, name = product.Name, model = product.Model, expectedQuantity = product.ExpectedQuantity });
+        return Ok(new { id = product.Id, name = product.Name, model = product.Model });
     }
 
     [HttpPost("{id}/scan")]
@@ -66,7 +66,7 @@ public class ShipmentController : ControllerBase
                 result.Barcode,
                 result.ExpectedProductId,
                 result.ScannedCount,
-                result.ExpectedQuantity
+                result.ShipmentScannedCount
             });
         }
         catch (InvalidOperationException ex)

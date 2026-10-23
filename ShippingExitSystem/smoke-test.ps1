@@ -53,7 +53,6 @@ $createShipmentBody = @{
     ExpectedProducts = @(
         @{
             Name = "S25 Ultra"
-            ExpectedQuantity = 2
             Model = "SM-S938B"
         }
     )

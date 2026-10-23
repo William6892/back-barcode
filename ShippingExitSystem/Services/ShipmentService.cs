@@ -43,7 +43,6 @@ namespace ShippingExitSystem.Services
                 {
                     Name = productDto.Name,
                     Model = productDto.Model,
-                    ExpectedQuantity = productDto.ExpectedQuantity,
                     CreatedByUserId = userId
                 });
             }
@@ -67,12 +66,22 @@ namespace ShippingExitSystem.Services
             if (shipment == null || shipment.Status != "Active")
                 return null;
 
+            var name = dto.Name.Trim();
+            var model = dto.Model?.Trim() ?? string.Empty;
+
+            // El guarda puede agregar la misma referencia dos veces sin darse cuenta: se reutiliza la existente
+            var existing = await _context.ExpectedProducts
+                .FirstOrDefaultAsync(ep => ep.ShipmentId == shipmentId
+                    && ep.Name.ToLower() == name.ToLower()
+                    && ep.Model.ToLower() == model.ToLower());
+            if (existing != null)
+                return existing;
+
             var expectedProduct = new ExpectedProduct
             {
                 ShipmentId = shipmentId,
-                Name = dto.Name,
-                Model = dto.Model,
-                ExpectedQuantity = dto.ExpectedQuantity,
+                Name = name,
+                Model = model,
                 CreatedByUserId = userId
             };
 
@@ -87,35 +96,17 @@ namespace ShippingExitSystem.Services
             if (barcode.Length == 0)
                 throw new InvalidOperationException("El serial está vacío.");
 
-            // Bloquea la fila de la referencia para que dos guardas no superen la cantidad esperada al mismo tiempo
-            await using var transaction = _context.Database.IsRelational()
-                ? await _context.Database.BeginTransactionAsync()
-                : null;
+            var productExists = await _context.ExpectedProducts
+                .AnyAsync(ep => ep.Id == dto.ExpectedProductId && ep.ShipmentId == shipmentId && ep.Shipment.Status == "Active");
 
-            if (transaction != null)
-            {
-                await _context.Database.ExecuteSqlInterpolatedAsync(
-                    $"SELECT 1 FROM \"ExpectedProducts\" WHERE \"Id\" = {dto.ExpectedProductId} FOR UPDATE");
-            }
-
-            var product = await _context.ExpectedProducts
-                .AsNoTracking()
-                .Where(ep => ep.Id == dto.ExpectedProductId && ep.ShipmentId == shipmentId && ep.Shipment.Status == "Active")
-                .Select(ep => new { ep.Id, ep.Name, ep.ExpectedQuantity, Scanned = ep.ScannedItems.Count() })
-                .FirstOrDefaultAsync();
-
-            if (product == null)
+            if (!productExists)
                 return null;
 
             await ThrowIfDuplicateAsync(barcode);
 
-            if (product.ExpectedQuantity > 0 && product.Scanned >= product.ExpectedQuantity)
-                throw new InvalidOperationException(
-                    $"La referencia '{product.Name}' ya tiene sus {product.ExpectedQuantity} unidades completas. No se pueden despachar más.");
-
             _context.ScannedItems.Add(new ScannedItem
             {
-                ExpectedProductId = product.Id,
+                ExpectedProductId = dto.ExpectedProductId,
                 Barcode = barcode,
                 ScannedAt = DateTime.UtcNow,
                 ScannedByUserId = userId
@@ -124,25 +115,25 @@ namespace ShippingExitSystem.Services
             try
             {
                 await _context.SaveChangesAsync();
-                if (transaction != null)
-                    await transaction.CommitAsync();
             }
             catch (DbUpdateException ex) when (IsUniqueViolation(ex))
             {
                 // Otro guarda escaneó el mismo serial en el mismo instante
                 _context.ChangeTracker.Clear();
-                if (transaction != null)
-                    await transaction.RollbackAsync();
                 await ThrowIfDuplicateAsync(barcode);
                 throw new InvalidOperationException($"El serial '{barcode}' ya fue escaneado.");
             }
 
+            // Conteo acumulado de la referencia y del envío después de este escaneo
+            var referenceCount = await _context.ScannedItems.CountAsync(si => si.ExpectedProductId == dto.ExpectedProductId);
+            var shipmentCount = await _context.ScannedItems.CountAsync(si => si.ExpectedProduct.ShipmentId == shipmentId);
+
             return new ScanResultDto
             {
                 Barcode = barcode,
-                ExpectedProductId = product.Id,
-                ScannedCount = product.Scanned + 1,
-                ExpectedQuantity = product.ExpectedQuantity
+                ExpectedProductId = dto.ExpectedProductId,
+                ScannedCount = referenceCount,
+                ShipmentScannedCount = shipmentCount
             };
         }
 
@@ -188,7 +179,6 @@ namespace ShippingExitSystem.Services
                     Status = s.Status,
                     CreatedAt = s.CreatedAt,
                     CreatedByUserName = s.CreatedByUser != null ? s.CreatedByUser.Username : "Desconocido",
-                    TotalExpected = s.ExpectedProducts.Sum(ep => ep.ExpectedQuantity),
                     TotalScanned = s.ExpectedProducts.Sum(ep => ep.ScannedItems.Count()),
                     Products = s.ExpectedProducts
                         .OrderBy(ep => ep.Id)
@@ -197,7 +187,6 @@ namespace ShippingExitSystem.Services
                             ExpectedProductId = ep.Id,
                             Name = ep.Name,
                             Model = ep.Model,
-                            ExpectedQuantity = ep.ExpectedQuantity,
                             ScannedCount = ep.ScannedItems.Count(),
                             CreatedByUserName = ep.CreatedByUser != null ? ep.CreatedByUser.Username : "Desconocido",
                             ScannedItems = ep.ScannedItems
@@ -231,7 +220,6 @@ namespace ShippingExitSystem.Services
                 Status = s.Status,
                 CreatedAt = s.CreatedAt,
                 CreatedByUserName = s.CreatedByUser != null ? s.CreatedByUser.Username : "Desconocido",
-                TotalExpected = s.ExpectedProducts.Sum(ep => ep.ExpectedQuantity),
                 TotalScanned = s.ExpectedProducts.Sum(ep => ep.ScannedItems.Count()),
                 Products = s.ExpectedProducts
                     .OrderBy(ep => ep.Id)
@@ -240,7 +228,6 @@ namespace ShippingExitSystem.Services
                         ExpectedProductId = ep.Id,
                         Name = ep.Name,
                         Model = ep.Model,
-                        ExpectedQuantity = ep.ExpectedQuantity,
                         ScannedCount = ep.ScannedItems.Count(),
                         CreatedByUserName = ep.CreatedByUser != null ? ep.CreatedByUser.Username : "Desconocido"
                     }).ToList()
