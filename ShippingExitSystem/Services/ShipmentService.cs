@@ -330,6 +330,29 @@ namespace ShippingExitSystem.Services
             return await ProjectSummary(query).ToListAsync();
         }
 
+        // Escaneos de las últimas 24 horas agrupados por hora (las horas sin escaneos vienen en 0)
+        private async Task<List<HourlyScanDto>> GetScansByHourAsync()
+        {
+            var now = DateTime.UtcNow;
+            var currentHour = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0, DateTimeKind.Utc);
+            var from = currentHour.AddHours(-23);
+
+            var counts = await _context.ScannedItems
+                .Where(si => si.ScannedAt >= from)
+                .GroupBy(si => new { si.ScannedAt.Date, si.ScannedAt.Hour })
+                .Select(g => new { g.Key.Date, g.Key.Hour, Count = g.Count() })
+                .ToListAsync();
+
+            return Enumerable.Range(0, 24)
+                .Select(i => from.AddHours(i))
+                .Select(h => new HourlyScanDto
+                {
+                    HourUtc = h,
+                    Count = counts.FirstOrDefault(c => c.Date == h.Date && c.Hour == h.Hour)?.Count ?? 0
+                })
+                .ToList();
+        }
+
         public async Task<DashboardStatsDto> GetDashboardStatsAsync()
         {
             var today = DateTime.UtcNow.Date;
@@ -370,7 +393,8 @@ namespace ShippingExitSystem.Services
                 TotalShipmentsToday = totalToday,
                 TotalProductsScannedToday = scannedToday,
                 TopCarriers = topCarriers,
-                TopProducts = topProducts
+                TopProducts = topProducts,
+                ScansByHour = await GetScansByHourAsync()
             };
         }
     }

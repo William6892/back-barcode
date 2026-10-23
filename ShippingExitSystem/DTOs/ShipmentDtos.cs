@@ -122,6 +122,14 @@ namespace ShippingExitSystem.DTOs
         public int TotalProductsScannedToday { get; set; }
         public List<DashboardTopItemDto> TopCarriers { get; set; } = new();
         public List<DashboardTopItemDto> TopProducts { get; set; } = new();
+        public List<HourlyScanDto> ScansByHour { get; set; } = new();
+    }
+
+    public class HourlyScanDto
+    {
+        // Inicio de la hora en UTC; el frontend la muestra en hora local
+        public DateTime HourUtc { get; set; }
+        public int Count { get; set; }
     }
 
     public class DashboardTopItemDto

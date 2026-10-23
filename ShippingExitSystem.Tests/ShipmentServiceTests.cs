@@ -257,5 +257,34 @@ namespace ShippingExitSystem.Tests
             Assert.All(page, s => Assert.All(s.Products, p => Assert.Empty(p.ScannedItems)));
             Assert.All(page, s => Assert.Equal(10, s.TotalExpected));
         }
+
+        [Fact]
+        public async Task GetDashboardStatsAsync_ReturnsLast24HoursOfScans()
+        {
+            var context = GetInMemoryDbContext("Stats_ByHour");
+            var service = new ShipmentService(context);
+
+            var user = new User { Username = "guard", Email = "g@test.com", PasswordHash = "hash" };
+            context.Users.Add(user);
+            var shipment = new Shipment { ShipmentNumber = "ENV-H", DriverName = "D", DriverDocument = "doc", Status = "Active", ScheduledDate = DateTime.UtcNow };
+            shipment.ExpectedProducts.Add(new ExpectedProduct { Name = "S25" });
+            context.Shipments.Add(shipment);
+            await context.SaveChangesAsync();
+
+            var productId = shipment.ExpectedProducts.First().Id;
+            context.ScannedItems.AddRange(
+                new ScannedItem { ExpectedProductId = productId, Barcode = "A", ScannedByUserId = user.Id, ScannedAt = DateTime.UtcNow },
+                new ScannedItem { ExpectedProductId = productId, Barcode = "B", ScannedByUserId = user.Id, ScannedAt = DateTime.UtcNow },
+                new ScannedItem { ExpectedProductId = productId, Barcode = "C", ScannedByUserId = user.Id, ScannedAt = DateTime.UtcNow.AddHours(-3) },
+                new ScannedItem { ExpectedProductId = productId, Barcode = "OLD", ScannedByUserId = user.Id, ScannedAt = DateTime.UtcNow.AddDays(-2) });
+            await context.SaveChangesAsync();
+
+            var stats = await service.GetDashboardStatsAsync();
+
+            Assert.Equal(24, stats.ScansByHour.Count);
+            Assert.Equal(2, stats.ScansByHour[^1].Count);
+            Assert.Equal(1, stats.ScansByHour[^4].Count);
+            Assert.Equal(3, stats.ScansByHour.Sum(h => h.Count));
+        }
     }
 }
