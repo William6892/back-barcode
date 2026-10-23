@@ -7,8 +7,8 @@ namespace ShippingExitSystem.Services
     {
         Task<Shipment> CreateShipmentAsync(CreateShipmentDto dto, int userId);
         Task<ExpectedProduct?> AddProductToShipmentAsync(int shipmentId, ExpectedProductDto dto, int userId);
-        Task<bool> ScanProductAsync(int shipmentId, ScanProductDto dto, int userId);
-        Task<ShipmentResponseDto> GetShipmentAsync(int id);
+        Task<ScanResultDto?> ScanProductAsync(int shipmentId, ScanProductDto dto, int userId);
+        Task<ShipmentResponseDto?> GetShipmentAsync(int id);
         Task<List<ShipmentResponseDto>> GetAllShipmentsAsync(string? status = null, int page = 1, int pageSize = 20);
         Task<bool> CompleteShipmentAsync(int shipmentId, int userId);
         Task<BarcodeSearchResponseDto?> SearchBarcodeAsync(string barcode);

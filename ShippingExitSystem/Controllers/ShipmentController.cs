@@ -19,10 +19,13 @@ public class ShipmentController : ControllerBase
 
     private int GetUserId()
     {
-        return int.Parse(User.FindFirst("userId")?.Value ?? "0");
+        return int.TryParse(User.FindFirst("userId")?.Value, out var userId)
+            ? userId
+            : throw new UnauthorizedAccessException("Token sin usuario válido");
     }
 
     [HttpPost]
+    [Authorize(Roles = Roles.Managers)]
     public async Task<IActionResult> Create(CreateShipmentDto dto)
     {
         try
@@ -38,13 +41,14 @@ public class ShipmentController : ControllerBase
     }
 
     [HttpPost("{id}/products")]
+    [Authorize(Roles = Roles.Managers)]
     public async Task<IActionResult> AddProduct(int id, ExpectedProductDto dto)
     {
         var userId = GetUserId();
         var product = await _shipmentService.AddProductToShipmentAsync(id, dto, userId);
         if (product == null)
             return BadRequest(new { error = "No se pudo añadir el producto. Verifique que el envío exista y esté activo." });
-        return Ok(new { id = product.Id, name = product.Name, model = product.Model });
+        return Ok(new { id = product.Id, name = product.Name, model = product.Model, expectedQuantity = product.ExpectedQuantity });
     }
 
     [HttpPost("{id}/scan")]
@@ -54,9 +58,16 @@ public class ShipmentController : ControllerBase
         {
             var userId = GetUserId();
             var result = await _shipmentService.ScanProductAsync(id, dto, userId);
-            if (!result)
+            if (result == null)
                 return BadRequest(new { error = "Producto no encontrado o envío no activo" });
-            return Ok(new { message = "Producto escaneado correctamente" });
+            return Ok(new
+            {
+                message = "Producto escaneado correctamente",
+                result.Barcode,
+                result.ExpectedProductId,
+                result.ScannedCount,
+                result.ExpectedQuantity
+            });
         }
         catch (InvalidOperationException ex)
         {

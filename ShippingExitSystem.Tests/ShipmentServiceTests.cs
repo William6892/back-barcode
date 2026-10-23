@@ -130,7 +130,8 @@ namespace ShippingExitSystem.Tests
             var result = await service.ScanProductAsync(shipment.Id, dto, userId);
 
             // Assert
-            Assert.True(result);
+            Assert.NotNull(result);
+            Assert.Equal(1, result.ScannedCount);
             var scanned = await context.ScannedItems.FirstOrDefaultAsync(si => si.Barcode == "8806090123456");
             Assert.NotNull(scanned);
             Assert.Equal(product.Id, scanned.ExpectedProductId);
@@ -180,6 +181,81 @@ namespace ShippingExitSystem.Tests
 
             Assert.Contains("ya fue escaneado", exception.Message);
             Assert.Contains("ENV-1", exception.Message);
+        }
+
+        [Fact]
+        public async Task ScanProductAsync_ShouldReject_WhenExpectedQuantityIsComplete()
+        {
+            var context = GetInMemoryDbContext("ScanProduct_QuantityFull");
+            var service = new ShipmentService(context);
+
+            var user = new User { Username = "guard", Email = "g@test.com", PasswordHash = "hash" };
+            context.Users.Add(user);
+            var shipment = new Shipment { ShipmentNumber = "ENV-Q", DriverName = "D", DriverDocument = "doc", Status = "Active", ScheduledDate = DateTime.UtcNow };
+            context.Shipments.Add(shipment);
+            await context.SaveChangesAsync();
+
+            var product = new ExpectedProduct { ShipmentId = shipment.Id, Name = "S25", ExpectedQuantity = 2 };
+            context.ExpectedProducts.Add(product);
+            await context.SaveChangesAsync();
+
+            await service.ScanProductAsync(shipment.Id, new ScanProductDto { ExpectedProductId = product.Id, Barcode = "SN-1" }, user.Id);
+            var second = await service.ScanProductAsync(shipment.Id, new ScanProductDto { ExpectedProductId = product.Id, Barcode = "SN-2" }, user.Id);
+            Assert.Equal(2, second!.ScannedCount);
+            Assert.Equal(2, second.ExpectedQuantity);
+
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                service.ScanProductAsync(shipment.Id, new ScanProductDto { ExpectedProductId = product.Id, Barcode = "SN-3" }, user.Id));
+
+            Assert.Contains("unidades completas", exception.Message);
+            Assert.Equal(2, await context.ScannedItems.CountAsync());
+        }
+
+        [Fact]
+        public async Task ScanProductAsync_ShouldReturnNull_WhenShipmentCompleted()
+        {
+            var context = GetInMemoryDbContext("ScanProduct_Completed");
+            var service = new ShipmentService(context);
+
+            var shipment = new Shipment { ShipmentNumber = "ENV-C", DriverName = "D", DriverDocument = "doc", Status = "Completed", ScheduledDate = DateTime.UtcNow };
+            context.Shipments.Add(shipment);
+            await context.SaveChangesAsync();
+            var product = new ExpectedProduct { ShipmentId = shipment.Id, Name = "S25" };
+            context.ExpectedProducts.Add(product);
+            await context.SaveChangesAsync();
+
+            var result = await service.ScanProductAsync(shipment.Id, new ScanProductDto { ExpectedProductId = product.Id, Barcode = "SN-X" }, 1);
+
+            Assert.Null(result);
+        }
+
+        [Fact]
+        public async Task GetAllShipmentsAsync_ReturnsCountsWithoutSerials_AndCapsPageSize()
+        {
+            var context = GetInMemoryDbContext("GetAll_Summary");
+            var service = new ShipmentService(context);
+
+            var user = new User { Username = "guard", Email = "g@test.com", PasswordHash = "hash" };
+            context.Users.Add(user);
+            await context.SaveChangesAsync();
+
+            for (var i = 0; i < 120; i++)
+            {
+                var s = new Shipment { ShipmentNumber = $"ENV-{i}", DriverName = "D", DriverDocument = "doc", Status = "Active", ScheduledDate = DateTime.UtcNow, CreatedAt = DateTime.UtcNow.AddMinutes(i) };
+                s.ExpectedProducts.Add(new ExpectedProduct { Name = "S25", ExpectedQuantity = 10 });
+                context.Shipments.Add(s);
+            }
+            await context.SaveChangesAsync();
+
+            var firstProduct = await context.ExpectedProducts.FirstAsync();
+            context.ScannedItems.Add(new ScannedItem { ExpectedProductId = firstProduct.Id, Barcode = "SN-A", ScannedByUserId = user.Id });
+            await context.SaveChangesAsync();
+
+            var page = await service.GetAllShipmentsAsync("Active", 1, 100000);
+
+            Assert.Equal(ShipmentService.MaxPageSize, page.Count);
+            Assert.All(page, s => Assert.All(s.Products, p => Assert.Empty(p.ScannedItems)));
+            Assert.All(page, s => Assert.Equal(10, s.TotalExpected));
         }
     }
 }

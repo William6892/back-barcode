@@ -33,6 +33,9 @@ namespace ShippingExitSystem.Migrations
                     b.Property<int?>("CreatedByUserId")
                         .HasColumnType("integer");
 
+                    b.Property<int>("ExpectedQuantity")
+                        .HasColumnType("integer");
+
                     b.Property<string>("Model")
                         .IsRequired()
                         .HasMaxLength(100)
@@ -78,6 +81,9 @@ namespace ShippingExitSystem.Migrations
                         .HasColumnType("integer");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("Barcode")
+                        .IsUnique();
 
                     b.HasIndex("ExpectedProductId");
 
@@ -144,6 +150,8 @@ namespace ShippingExitSystem.Migrations
 
                     b.HasIndex("ShipmentNumber")
                         .IsUnique();
+
+                    b.HasIndex("Status", "CreatedAt");
 
                     b.ToTable("Shipments");
                 });

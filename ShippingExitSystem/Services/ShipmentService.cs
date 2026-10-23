@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using ShippingExitSystem.Data;
 using ShippingExitSystem.Models;
 using ShippingExitSystem.DTOs;
@@ -7,6 +8,8 @@ namespace ShippingExitSystem.Services
 {
     public class ShipmentService : IShipmentService
     {
+        public const int MaxPageSize = 100;
+
         private readonly ApplicationDbContext _context;
 
         public ShipmentService(ApplicationDbContext context)
@@ -16,17 +19,17 @@ namespace ShippingExitSystem.Services
 
         public async Task<Shipment> CreateShipmentAsync(CreateShipmentDto dto, int userId)
         {
-            var existing = await _context.Shipments.FirstOrDefaultAsync(s => s.ShipmentNumber == dto.ShipmentNumber);
-            if (existing != null)
-                throw new InvalidOperationException($"El número de envío '{dto.ShipmentNumber}' ya existe. Usa uno diferente.");
+            var shipmentNumber = dto.ShipmentNumber.Trim();
+            if (await _context.Shipments.AnyAsync(s => s.ShipmentNumber == shipmentNumber))
+                throw new InvalidOperationException($"El número de envío '{shipmentNumber}' ya existe. Usa uno diferente.");
 
             var shipment = new Shipment
             {
-                ShipmentNumber = dto.ShipmentNumber,
+                ShipmentNumber = shipmentNumber,
                 Carrier = dto.Carrier,
                 DriverName = dto.DriverName,
                 DriverDocument = dto.DriverDocument,
-                VehiclePlate = dto.VehiclePlate,
+                VehiclePlate = dto.VehiclePlate?.Trim().ToUpperInvariant() ?? string.Empty,
                 VehicleModel = dto.VehicleModel,
                 ScheduledDate = dto.ScheduledDate.ToUniversalTime(),
                 Status = "Active",
@@ -34,22 +37,27 @@ namespace ShippingExitSystem.Services
                 CreatedAt = DateTime.UtcNow
             };
 
-            _context.Shipments.Add(shipment);
-            await _context.SaveChangesAsync();
-
             foreach (var productDto in dto.ExpectedProducts)
             {
-                var expectedProduct = new ExpectedProduct
+                shipment.ExpectedProducts.Add(new ExpectedProduct
                 {
-                    ShipmentId = shipment.Id,
                     Name = productDto.Name,
                     Model = productDto.Model,
+                    ExpectedQuantity = productDto.ExpectedQuantity,
                     CreatedByUserId = userId
-                };
-                _context.ExpectedProducts.Add(expectedProduct);
+                });
             }
 
-            await _context.SaveChangesAsync();
+            // Envío y referencias en una sola transacción
+            _context.Shipments.Add(shipment);
+            try
+            {
+                await _context.SaveChangesAsync();
+            }
+            catch (DbUpdateException ex) when (IsUniqueViolation(ex))
+            {
+                throw new InvalidOperationException($"El número de envío '{shipmentNumber}' ya existe. Usa uno diferente.");
+            }
             return shipment;
         }
 
@@ -64,6 +72,7 @@ namespace ShippingExitSystem.Services
                 ShipmentId = shipmentId,
                 Name = dto.Name,
                 Model = dto.Model,
+                ExpectedQuantity = dto.ExpectedQuantity,
                 CreatedByUserId = userId
             };
 
@@ -72,133 +81,189 @@ namespace ShippingExitSystem.Services
             return expectedProduct;
         }
 
-        public async Task<bool> ScanProductAsync(int shipmentId, ScanProductDto dto, int userId)
+        public async Task<ScanResultDto?> ScanProductAsync(int shipmentId, ScanProductDto dto, int userId)
         {
-            var shipment = await _context.Shipments.FindAsync(shipmentId);
-            if (shipment == null || shipment.Status != "Active")
-                return false;
+            var barcode = dto.Barcode.Trim();
+            if (barcode.Length == 0)
+                throw new InvalidOperationException("El serial está vacío.");
 
-            var expectedProduct = await _context.ExpectedProducts
-                .FirstOrDefaultAsync(ep => ep.Id == dto.ExpectedProductId && ep.ShipmentId == shipmentId);
+            // Bloquea la fila de la referencia para que dos guardas no superen la cantidad esperada al mismo tiempo
+            await using var transaction = _context.Database.IsRelational()
+                ? await _context.Database.BeginTransactionAsync()
+                : null;
 
-            if (expectedProduct == null)
-                return false;
+            if (transaction != null)
+            {
+                await _context.Database.ExecuteSqlInterpolatedAsync(
+                    $"SELECT 1 FROM \"ExpectedProducts\" WHERE \"Id\" = {dto.ExpectedProductId} FOR UPDATE");
+            }
 
-            // Buscar duplicado global en ScannedItems
+            var product = await _context.ExpectedProducts
+                .AsNoTracking()
+                .Where(ep => ep.Id == dto.ExpectedProductId && ep.ShipmentId == shipmentId && ep.Shipment.Status == "Active")
+                .Select(ep => new { ep.Id, ep.Name, ep.ExpectedQuantity, Scanned = ep.ScannedItems.Count() })
+                .FirstOrDefaultAsync();
+
+            if (product == null)
+                return null;
+
+            await ThrowIfDuplicateAsync(barcode);
+
+            if (product.ExpectedQuantity > 0 && product.Scanned >= product.ExpectedQuantity)
+                throw new InvalidOperationException(
+                    $"La referencia '{product.Name}' ya tiene sus {product.ExpectedQuantity} unidades completas. No se pueden despachar más.");
+
+            _context.ScannedItems.Add(new ScannedItem
+            {
+                ExpectedProductId = product.Id,
+                Barcode = barcode,
+                ScannedAt = DateTime.UtcNow,
+                ScannedByUserId = userId
+            });
+
+            try
+            {
+                await _context.SaveChangesAsync();
+                if (transaction != null)
+                    await transaction.CommitAsync();
+            }
+            catch (DbUpdateException ex) when (IsUniqueViolation(ex))
+            {
+                // Otro guarda escaneó el mismo serial en el mismo instante
+                _context.ChangeTracker.Clear();
+                if (transaction != null)
+                    await transaction.RollbackAsync();
+                await ThrowIfDuplicateAsync(barcode);
+                throw new InvalidOperationException($"El serial '{barcode}' ya fue escaneado.");
+            }
+
+            return new ScanResultDto
+            {
+                Barcode = barcode,
+                ExpectedProductId = product.Id,
+                ScannedCount = product.Scanned + 1,
+                ExpectedQuantity = product.ExpectedQuantity
+            };
+        }
+
+        private async Task ThrowIfDuplicateAsync(string barcode)
+        {
             var duplicate = await _context.ScannedItems
-                .Include(si => si.ScannedByUser)
-                .Include(si => si.ExpectedProduct)
-                    .ThenInclude(ep => ep.Shipment)
-                .FirstOrDefaultAsync(si => si.Barcode == dto.Barcode);
+                .AsNoTracking()
+                .Where(si => si.Barcode == barcode)
+                .Select(si => new
+                {
+                    si.ExpectedProduct.Shipment.ShipmentNumber,
+                    ScannedBy = si.ScannedByUser.Username,
+                    si.ScannedAt
+                })
+                .FirstOrDefaultAsync();
 
             if (duplicate != null)
             {
-                var shipmentNumber = duplicate.ExpectedProduct.Shipment.ShipmentNumber;
-                var scannedBy = duplicate.ScannedByUser?.Username ?? "Desconocido";
                 var scannedAt = duplicate.ScannedAt.ToString("dd/MM/yyyy HH:mm");
-                throw new InvalidOperationException($"El serial '{dto.Barcode}' ya fue escaneado en el envío '{shipmentNumber}' por el usuario '{scannedBy}' el {scannedAt}.");
+                throw new InvalidOperationException(
+                    $"El serial '{barcode}' ya fue escaneado en el envío '{duplicate.ShipmentNumber}' por el usuario '{duplicate.ScannedBy ?? "Desconocido"}' el {scannedAt}.");
             }
-
-            var scannedItem = new ScannedItem
-            {
-                ExpectedProductId = dto.ExpectedProductId,
-                Barcode = dto.Barcode,
-                ScannedAt = DateTime.UtcNow,
-                ScannedByUserId = userId
-            };
-
-            _context.ScannedItems.Add(scannedItem);
-            await _context.SaveChangesAsync();
-            return true;
         }
 
-        public async Task<ShipmentResponseDto> GetShipmentAsync(int id)
+        private static bool IsUniqueViolation(DbUpdateException ex) =>
+            ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation };
+
+        public async Task<ShipmentResponseDto?> GetShipmentAsync(int id)
         {
             var shipment = await _context.Shipments
-                .Include(s => s.CreatedByUser)
-                .Include(s => s.ExpectedProducts)
-                    .ThenInclude(ep => ep.CreatedByUser)
-                .Include(s => s.ExpectedProducts)
-                    .ThenInclude(ep => ep.ScannedItems)
-                        .ThenInclude(si => si.ScannedByUser)
-                .FirstOrDefaultAsync(s => s.Id == id);
-
-            if (shipment == null) return null;
-
-            var products = shipment.ExpectedProducts.Select(ep => new ProductSummaryDto
-            {
-                ExpectedProductId = ep.Id,
-                Name = ep.Name,
-                Model = ep.Model,
-                ScannedCount = ep.ScannedItems.Count,
-                CreatedByUserName = ep.CreatedByUser?.Username ?? "Desconocido",
-                ScannedItems = ep.ScannedItems.Select(si => new ScannedItemDetailDto
+                .AsNoTracking()
+                .Where(s => s.Id == id)
+                .Select(s => new ShipmentResponseDto
                 {
-                    Barcode = si.Barcode,
-                    ScannedAt = si.ScannedAt,
-                    ScannedByUserName = si.ScannedByUser?.Username ?? "Desconocido"
-                }).ToList()
-            }).ToList();
+                    Id = s.Id,
+                    ShipmentNumber = s.ShipmentNumber,
+                    Carrier = s.Carrier,
+                    DriverName = s.DriverName,
+                    DriverDocument = s.DriverDocument,
+                    VehiclePlate = s.VehiclePlate,
+                    VehicleModel = s.VehicleModel,
+                    ScheduledDate = s.ScheduledDate,
+                    Status = s.Status,
+                    CreatedAt = s.CreatedAt,
+                    CreatedByUserName = s.CreatedByUser != null ? s.CreatedByUser.Username : "Desconocido",
+                    TotalExpected = s.ExpectedProducts.Sum(ep => ep.ExpectedQuantity),
+                    TotalScanned = s.ExpectedProducts.Sum(ep => ep.ScannedItems.Count()),
+                    Products = s.ExpectedProducts
+                        .OrderBy(ep => ep.Id)
+                        .Select(ep => new ProductSummaryDto
+                        {
+                            ExpectedProductId = ep.Id,
+                            Name = ep.Name,
+                            Model = ep.Model,
+                            ExpectedQuantity = ep.ExpectedQuantity,
+                            ScannedCount = ep.ScannedItems.Count(),
+                            CreatedByUserName = ep.CreatedByUser != null ? ep.CreatedByUser.Username : "Desconocido",
+                            ScannedItems = ep.ScannedItems
+                                .OrderBy(si => si.ScannedAt)
+                                .Select(si => new ScannedItemDetailDto
+                                {
+                                    Barcode = si.Barcode,
+                                    ScannedAt = si.ScannedAt,
+                                    ScannedByUserName = si.ScannedByUser.Username
+                                }).ToList()
+                        }).ToList()
+                })
+                .AsSplitQuery()
+                .FirstOrDefaultAsync();
 
-            return new ShipmentResponseDto
-            {
-                Id = shipment.Id,
-                ShipmentNumber = shipment.ShipmentNumber,
-                Carrier = shipment.Carrier,
-                DriverName = shipment.DriverName,
-                VehiclePlate = shipment.VehiclePlate,
-                Status = shipment.Status,
-                CreatedAt = shipment.CreatedAt,
-                CreatedByUserName = shipment.CreatedByUser?.Username ?? "Desconocido",
-                Products = products
-            };
+            return shipment;
         }
+
+        // Resumen sin seriales: las listas solo necesitan contadores, no las 1200 filas de cada envío
+        private static IQueryable<ShipmentResponseDto> ProjectSummary(IQueryable<Shipment> query) =>
+            query.Select(s => new ShipmentResponseDto
+            {
+                Id = s.Id,
+                ShipmentNumber = s.ShipmentNumber,
+                Carrier = s.Carrier,
+                DriverName = s.DriverName,
+                DriverDocument = s.DriverDocument,
+                VehiclePlate = s.VehiclePlate,
+                VehicleModel = s.VehicleModel,
+                ScheduledDate = s.ScheduledDate,
+                Status = s.Status,
+                CreatedAt = s.CreatedAt,
+                CreatedByUserName = s.CreatedByUser != null ? s.CreatedByUser.Username : "Desconocido",
+                TotalExpected = s.ExpectedProducts.Sum(ep => ep.ExpectedQuantity),
+                TotalScanned = s.ExpectedProducts.Sum(ep => ep.ScannedItems.Count()),
+                Products = s.ExpectedProducts
+                    .OrderBy(ep => ep.Id)
+                    .Select(ep => new ProductSummaryDto
+                    {
+                        ExpectedProductId = ep.Id,
+                        Name = ep.Name,
+                        Model = ep.Model,
+                        ExpectedQuantity = ep.ExpectedQuantity,
+                        ScannedCount = ep.ScannedItems.Count(),
+                        CreatedByUserName = ep.CreatedByUser != null ? ep.CreatedByUser.Username : "Desconocido"
+                    }).ToList()
+            });
+
+        private static (int page, int pageSize) ClampPaging(int page, int pageSize) =>
+            (Math.Max(1, page), Math.Clamp(pageSize, 1, MaxPageSize));
 
         public async Task<List<ShipmentResponseDto>> GetAllShipmentsAsync(string? status = null, int page = 1, int pageSize = 20)
         {
-            var query = _context.Shipments
-                .Include(s => s.CreatedByUser)
-                .Include(s => s.ExpectedProducts)
-                    .ThenInclude(ep => ep.CreatedByUser)
-                .Include(s => s.ExpectedProducts)
-                    .ThenInclude(ep => ep.ScannedItems)
-                        .ThenInclude(si => si.ScannedByUser)
-                .AsQueryable();
+            (page, pageSize) = ClampPaging(page, pageSize);
+
+            var query = _context.Shipments.AsNoTracking();
 
             if (!string.IsNullOrEmpty(status))
                 query = query.Where(s => s.Status == status);
 
-            var shipments = await query
+            query = query
                 .OrderByDescending(s => s.CreatedAt)
                 .Skip((page - 1) * pageSize)
-                .Take(pageSize)
-                .ToListAsync();
+                .Take(pageSize);
 
-            return shipments.Select(shipment => new ShipmentResponseDto
-            {
-                Id = shipment.Id,
-                ShipmentNumber = shipment.ShipmentNumber,
-                Carrier = shipment.Carrier,
-                DriverName = shipment.DriverName,
-                VehiclePlate = shipment.VehiclePlate,
-                Status = shipment.Status,
-                CreatedAt = shipment.CreatedAt,
-                CreatedByUserName = shipment.CreatedByUser?.Username ?? "Desconocido",
-                Products = shipment.ExpectedProducts.Select(ep => new ProductSummaryDto
-                {
-                    ExpectedProductId = ep.Id,
-                    Name = ep.Name,
-                    Model = ep.Model,
-                    ScannedCount = ep.ScannedItems.Count,
-                    CreatedByUserName = ep.CreatedByUser?.Username ?? "Desconocido",
-                    ScannedItems = ep.ScannedItems.Select(si => new ScannedItemDetailDto
-                    {
-                        Barcode = si.Barcode,
-                        ScannedAt = si.ScannedAt,
-                        ScannedByUserName = si.ScannedByUser?.Username ?? "Desconocido"
-                    }).ToList()
-                }).ToList()
-            }).ToList();
+            return await ProjectSummary(query).ToListAsync();
         }
 
         public async Task<bool> CompleteShipmentAsync(int shipmentId, int userId)
@@ -214,117 +279,55 @@ namespace ShippingExitSystem.Services
 
         public async Task<BarcodeSearchResponseDto?> SearchBarcodeAsync(string barcode)
         {
-            var scannedItem = await _context.ScannedItems
-                .Include(si => si.ScannedByUser)
-                .Include(si => si.ExpectedProduct)
-                    .ThenInclude(ep => ep.Shipment)
-                        .ThenInclude(s => s.CreatedByUser)
-                .FirstOrDefaultAsync(si => si.Barcode == barcode);
-
-            if (scannedItem == null) return null;
-
-            var ep = scannedItem.ExpectedProduct;
-            var shipment = ep.Shipment;
-
-            return new BarcodeSearchResponseDto
-            {
-                Barcode = scannedItem.Barcode,
-                ScannedAt = scannedItem.ScannedAt,
-                ScannedByUserName = scannedItem.ScannedByUser?.Username ?? "Desconocido",
-                ShipmentId = shipment.Id,
-                ShipmentNumber = shipment.ShipmentNumber,
-                Status = shipment.Status,
-                Carrier = shipment.Carrier,
-                DriverName = shipment.DriverName,
-                DriverDocument = shipment.DriverDocument,
-                VehiclePlate = shipment.VehiclePlate,
-                ProductName = ep.Name,
-                ProductModel = ep.Model
-            };
+            barcode = barcode.Trim();
+            return await ProjectBarcode(_context.ScannedItems.AsNoTracking().Where(si => si.Barcode == barcode))
+                .FirstOrDefaultAsync();
         }
 
         public async Task<List<BarcodeSearchResponseDto>> SearchBarcodesAsync(string query, int page = 1, int pageSize = 50)
         {
-            var scannedItems = await _context.ScannedItems
-                .Include(si => si.ScannedByUser)
-                .Include(si => si.ExpectedProduct)
-                    .ThenInclude(ep => ep.Shipment)
+            (page, pageSize) = ClampPaging(page, pageSize);
+
+            var items = _context.ScannedItems
+                .AsNoTracking()
                 .Where(si => si.Barcode.Contains(query))
                 .OrderByDescending(si => si.ScannedAt)
                 .Skip((page - 1) * pageSize)
-                .Take(pageSize)
-                .ToListAsync();
+                .Take(pageSize);
 
-            return scannedItems.Select(si =>
-            {
-                var ep = si.ExpectedProduct;
-                var shipment = ep.Shipment;
-                return new BarcodeSearchResponseDto
-                {
-                    Barcode = si.Barcode,
-                    ScannedAt = si.ScannedAt,
-                    ScannedByUserName = si.ScannedByUser?.Username ?? "Desconocido",
-                    ShipmentId = shipment.Id,
-                    ShipmentNumber = shipment.ShipmentNumber,
-                    Status = shipment.Status,
-                    Carrier = shipment.Carrier,
-                    DriverName = shipment.DriverName,
-                    DriverDocument = shipment.DriverDocument,
-                    VehiclePlate = shipment.VehiclePlate,
-                    ProductName = ep.Name,
-                    ProductModel = ep.Model
-                };
-            }).ToList();
+            return await ProjectBarcode(items).ToListAsync();
         }
+
+        private static IQueryable<BarcodeSearchResponseDto> ProjectBarcode(IQueryable<ScannedItem> query) =>
+            query.Select(si => new BarcodeSearchResponseDto
+            {
+                Barcode = si.Barcode,
+                ScannedAt = si.ScannedAt,
+                ScannedByUserName = si.ScannedByUser.Username,
+                ShipmentId = si.ExpectedProduct.Shipment.Id,
+                ShipmentNumber = si.ExpectedProduct.Shipment.ShipmentNumber,
+                Status = si.ExpectedProduct.Shipment.Status,
+                Carrier = si.ExpectedProduct.Shipment.Carrier,
+                DriverName = si.ExpectedProduct.Shipment.DriverName,
+                DriverDocument = si.ExpectedProduct.Shipment.DriverDocument,
+                VehiclePlate = si.ExpectedProduct.Shipment.VehiclePlate,
+                ProductName = si.ExpectedProduct.Name,
+                ProductModel = si.ExpectedProduct.Model
+            });
 
         public async Task<List<ShipmentResponseDto>> SearchShipmentsAsync(string? shipmentNumber, string? vehiclePlate)
         {
-            var query = _context.Shipments
-                .Include(s => s.CreatedByUser)
-                .Include(s => s.ExpectedProducts)
-                    .ThenInclude(ep => ep.CreatedByUser)
-                .Include(s => s.ExpectedProducts)
-                    .ThenInclude(ep => ep.ScannedItems)
-                        .ThenInclude(si => si.ScannedByUser)
-                .AsQueryable();
+            var query = _context.Shipments.AsNoTracking();
 
             if (!string.IsNullOrEmpty(shipmentNumber))
-            {
                 query = query.Where(s => s.ShipmentNumber.Contains(shipmentNumber));
-            }
 
             if (!string.IsNullOrEmpty(vehiclePlate))
-            {
                 query = query.Where(s => s.VehiclePlate != null && s.VehiclePlate.Contains(vehiclePlate));
-            }
 
-            var shipments = await query.ToListAsync();
+            query = query.OrderByDescending(s => s.CreatedAt).Take(MaxPageSize);
 
-            return shipments.Select(shipment => new ShipmentResponseDto
-            {
-                Id = shipment.Id,
-                ShipmentNumber = shipment.ShipmentNumber,
-                Carrier = shipment.Carrier,
-                DriverName = shipment.DriverName,
-                VehiclePlate = shipment.VehiclePlate,
-                Status = shipment.Status,
-                CreatedAt = shipment.CreatedAt,
-                CreatedByUserName = shipment.CreatedByUser?.Username ?? "Desconocido",
-                Products = shipment.ExpectedProducts.Select(ep => new ProductSummaryDto
-                {
-                    ExpectedProductId = ep.Id,
-                    Name = ep.Name,
-                    Model = ep.Model,
-                    ScannedCount = ep.ScannedItems.Count,
-                    CreatedByUserName = ep.CreatedByUser?.Username ?? "Desconocido",
-                    ScannedItems = ep.ScannedItems.Select(si => new ScannedItemDetailDto
-                    {
-                        Barcode = si.Barcode,
-                        ScannedAt = si.ScannedAt,
-                        ScannedByUserName = si.ScannedByUser?.Username ?? "Desconocido"
-                    }).ToList()
-                }).ToList()
-            }).ToList();
+            return await ProjectSummary(query).ToListAsync();
         }
 
         public async Task<DashboardStatsDto> GetDashboardStatsAsync()

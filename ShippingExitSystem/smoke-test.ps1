@@ -1,11 +1,20 @@
-$ApiBase = "http://localhost:5229/api"
+param(
+    [string]$ApiBase = "http://localhost:5229/api",
+    [string]$AdminUser = $env:SMOKE_ADMIN_USER,
+    [string]$AdminPassword = $env:SMOKE_ADMIN_PASSWORD
+)
+
+if (-not $AdminUser -or -not $AdminPassword) {
+    Write-Host "Define SMOKE_ADMIN_USER y SMOKE_ADMIN_PASSWORD (o pasa -AdminUser/-AdminPassword). Solo para entornos locales." -ForegroundColor Red
+    exit 1
+}
 
 Write-Host "1. Creando/Autenticando un Usuario Administrador..." -ForegroundColor Cyan
 
 # Intentar login
 $loginBody = @{
-    Username = "admin_test"
-    Password = "AdminPassword123!"
+    Username = $AdminUser
+    Password = $AdminPassword
 } | ConvertTo-Json
 
 $loginResponse = $null
@@ -14,8 +23,8 @@ try {
 } catch {
     Write-Host "El usuario no existe, procediendo a registrarlo..."
     $registerBody = @{
-        Username = "admin_test"
-        Password = "AdminPassword123!"
+        Username = $AdminUser
+        Password = $AdminPassword
         Email = "admin@test.com"
         Role = "Admin"
     } | ConvertTo-Json
@@ -44,6 +53,7 @@ $createShipmentBody = @{
     ExpectedProducts = @(
         @{
             Name = "S25 Ultra"
+            ExpectedQuantity = 2
             Model = "SM-S938B"
         }
     )

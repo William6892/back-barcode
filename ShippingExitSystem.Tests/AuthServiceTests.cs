@@ -40,6 +40,9 @@ namespace ShippingExitSystem.Tests
             var (context, config) = GetContextAndConfig("Register_Success");
             var service = new AuthService(context, config);
 
+            context.Users.Add(new User { Username = "admin", Email = "admin@test.com", PasswordHash = "hash", Role = "Admin" });
+            await context.SaveChangesAsync();
+
             var dto = new RegisterDto
             {
                 Username = "newuser",
@@ -48,7 +51,7 @@ namespace ShippingExitSystem.Tests
             };
 
             // Act
-            var user = await service.RegisterAsync(dto);
+            var user = await service.RegisterAsync(dto, callerIsAdmin: true);
 
             // Assert
             Assert.NotNull(user);
@@ -81,10 +84,67 @@ namespace ShippingExitSystem.Tests
             };
 
             // Act & Assert
-            var exception = await Assert.ThrowsAsync<Exception>(() =>
-                service.RegisterAsync(dto));
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                service.RegisterAsync(dto, callerIsAdmin: true));
 
             Assert.Contains("ya existe", exception.Message);
+        }
+
+        [Fact]
+        public async Task RegisterAsync_FirstUser_BecomesAdmin()
+        {
+            var (context, config) = GetContextAndConfig("Register_Bootstrap");
+            var service = new AuthService(context, config);
+
+            var user = await service.RegisterAsync(new RegisterDto
+            {
+                Username = "owner",
+                Email = "owner@test.com",
+                Password = "SecretPassword123",
+                Role = "Inspector"
+            }, callerIsAdmin: false);
+
+            Assert.Equal("Admin", user.Role);
+        }
+
+        [Fact]
+        public async Task RegisterAsync_ShouldReject_WhenCallerIsNotAdmin()
+        {
+            var (context, config) = GetContextAndConfig("Register_NotAdmin");
+            var service = new AuthService(context, config);
+
+            context.Users.Add(new User { Username = "admin", Email = "admin@test.com", PasswordHash = "hash", Role = "Admin" });
+            await context.SaveChangesAsync();
+
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+                service.RegisterAsync(new RegisterDto
+                {
+                    Username = "attacker",
+                    Email = "attacker@test.com",
+                    Password = "SecretPassword123",
+                    Role = "Admin"
+                }, callerIsAdmin: false));
+
+            Assert.False(await context.Users.AnyAsync(u => u.Username == "attacker"));
+        }
+
+        [Fact]
+        public async Task RegisterAsync_ShouldReject_InvalidRole()
+        {
+            var (context, config) = GetContextAndConfig("Register_InvalidRole");
+            var service = new AuthService(context, config);
+
+            context.Users.Add(new User { Username = "admin", Email = "admin@test.com", PasswordHash = "hash", Role = "Admin" });
+            await context.SaveChangesAsync();
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                service.RegisterAsync(new RegisterDto
+                {
+                    Username = "guard",
+                    Email = "guard@test.com",
+                    Password = "SecretPassword123",
+                    Role = "SuperAdmin"
+                }, callerIsAdmin: true));
         }
 
         [Fact]
@@ -142,7 +202,7 @@ namespace ShippingExitSystem.Tests
             };
 
             // Act & Assert
-            var exception = await Assert.ThrowsAsync<Exception>(() =>
+            var exception = await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
                 service.LoginAsync(dto));
 
             Assert.Contains("incorrectos", exception.Message);

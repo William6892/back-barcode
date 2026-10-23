@@ -39,6 +39,9 @@ namespace ShippingExitSystem.DTOs
 
         [StringLength(100, ErrorMessage = "El modelo del producto no puede superar los 100 caracteres.")]
         public string Model { get; set; } = string.Empty;
+
+        [Range(0, 100000, ErrorMessage = "La cantidad esperada debe estar entre 0 y 100.000.")]
+        public int ExpectedQuantity { get; set; }
     }
 
     public class ScanProductDto
@@ -51,16 +54,29 @@ namespace ShippingExitSystem.DTOs
         public string Barcode { get; set; } = string.Empty;
     }
 
+    public class ScanResultDto
+    {
+        public string Barcode { get; set; } = string.Empty;
+        public int ExpectedProductId { get; set; }
+        public int ScannedCount { get; set; }
+        public int ExpectedQuantity { get; set; }
+    }
+
     public class ShipmentResponseDto
     {
         public int Id { get; set; }
         public string ShipmentNumber { get; set; } = string.Empty;
         public string Carrier { get; set; } = string.Empty;
         public string DriverName { get; set; } = string.Empty;
+        public string DriverDocument { get; set; } = string.Empty;
         public string Status { get; set; } = string.Empty;
-        public string VehiclePlate { get; set; } = string.Empty;    
-        public DateTime CreatedAt { get; set; }                     
+        public string VehiclePlate { get; set; } = string.Empty;
+        public string VehicleModel { get; set; } = string.Empty;
+        public DateTime ScheduledDate { get; set; }
+        public DateTime CreatedAt { get; set; }
         public string CreatedByUserName { get; set; } = string.Empty;
+        public int TotalExpected { get; set; }
+        public int TotalScanned { get; set; }
         public List<ProductSummaryDto> Products { get; set; } = new();
     }
 
@@ -69,6 +85,7 @@ namespace ShippingExitSystem.DTOs
         public int ExpectedProductId { get; set; }
         public string Name { get; set; } = string.Empty;
         public string Model { get; set; } = string.Empty;
+        public int ExpectedQuantity { get; set; }
         public int ScannedCount { get; set; }
         public string CreatedByUserName { get; set; } = string.Empty;
         public List<ScannedItemDetailDto> ScannedItems { get; set; } = new();

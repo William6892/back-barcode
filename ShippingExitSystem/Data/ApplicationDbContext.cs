@@ -27,6 +27,14 @@ namespace ShippingExitSystem.Data
                 .HasIndex(s => s.ShipmentNumber)
                 .IsUnique();
 
+            modelBuilder.Entity<Shipment>()
+                .HasIndex(s => new { s.Status, s.CreatedAt });
+
+            // Un serial solo puede salir una vez: la BD lo garantiza aunque dos guardas escaneen a la vez
+            modelBuilder.Entity<ScannedItem>()
+                .HasIndex(si => si.Barcode)
+                .IsUnique();
+
             modelBuilder.Entity<ExpectedProduct>()
                 .HasOne(ep => ep.Shipment)
                 .WithMany(s => s.ExpectedProducts)

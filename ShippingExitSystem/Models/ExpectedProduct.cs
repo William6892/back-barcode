@@ -19,6 +19,9 @@ namespace ShippingExitSystem.Models
         [StringLength(100)]
         public string Model { get; set; } = string.Empty;
 
+        // Unidades a despachar de esta referencia (0 = sin límite)
+        public int ExpectedQuantity { get; set; }
+
         public int? CreatedByUserId { get; set; }
         [ForeignKey("CreatedByUserId")]
         public virtual User? CreatedByUser { get; set; }

@@ -1,7 +1,9 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
+using System.Threading.RateLimiting;
 using ShippingExitSystem.Data;
 using ShippingExitSystem.Services;
 
@@ -53,7 +55,11 @@ try
         options.UseNpgsql(connectionString));
 
     // JWT Authentication
-    var jwtKey = builder.Configuration["JwtSettings:Secret"] ?? "SuperSecretKey12345678901234567890";
+    // Sin clave por defecto: si falta o es débil la app no arranca, así nadie firma tokens con una clave pública
+    var jwtKey = builder.Configuration["JwtSettings:Secret"];
+    if (string.IsNullOrWhiteSpace(jwtKey) || jwtKey.Length < 32)
+        throw new InvalidOperationException(
+            "JwtSettings:Secret debe estar configurado y tener al menos 32 caracteres (en Render: variable JwtSettings__Secret).");
     var key = Encoding.UTF8.GetBytes(jwtKey);
 
     builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -91,7 +97,33 @@ try
         });
     });
 
+    // Render está detrás de un proxy: la IP real del cliente viene en X-Forwarded-For
+    builder.Services.Configure<ForwardedHeadersOptions>(options =>
+    {
+        options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+        options.KnownIPNetworks.Clear();
+        options.KnownProxies.Clear();
+    });
+
+    // Máximo 10 intentos de login/registro por minuto por IP (frena fuerza bruta)
+    builder.Services.AddRateLimiter(options =>
+    {
+        options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+        options.AddPolicy("auth", httpContext =>
+            RateLimitPartition.GetFixedWindowLimiter(
+                httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                _ => new FixedWindowRateLimiterOptions { PermitLimit = 10, Window = TimeSpan.FromMinutes(1) }));
+    });
+
+    builder.Services.AddProblemDetails();
+
     var app = builder.Build();
+
+    app.UseForwardedHeaders();
+
+    // Errores no controlados: se registran en el log pero al cliente no se le muestran detalles internos
+    app.UseExceptionHandler();
+    app.UseStatusCodePages();
 
     // Configure the HTTP request pipeline.
     if (app.Environment.IsDevelopment())
@@ -108,9 +140,16 @@ try
         app.UseHttpsRedirection();
     }
 
+    app.UseRateLimiter();
     app.UseAuthentication();
     app.UseAuthorization();
     app.MapControllers();
+
+    // Para el health check de Render y para despertar el servicio antes del turno
+    app.MapGet("/health", async (ApplicationDbContext db) =>
+        await db.Database.CanConnectAsync()
+            ? Results.Ok(new { status = "ok" })
+            : Results.StatusCode(StatusCodes.Status503ServiceUnavailable));
 
     // 🔥 Probar conexión a la base de datos al iniciar
     using (var scope = app.Services.CreateScope())

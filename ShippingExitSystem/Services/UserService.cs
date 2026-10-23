@@ -45,7 +45,11 @@ namespace ShippingExitSystem.Services
                 user.Email = updateDto.Email;
 
             if (!string.IsNullOrEmpty(updateDto.Role))
+            {
+                if (!Roles.IsValid(updateDto.Role))
+                    throw new InvalidOperationException($"Rol inválido. Usa: {string.Join(", ", Roles.All)}.");
                 user.Role = updateDto.Role;
+            }
 
             if (updateDto.IsActive.HasValue)
                 user.IsActive = updateDto.IsActive.Value;
